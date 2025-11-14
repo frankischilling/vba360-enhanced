@@ -63,6 +63,7 @@ This project uses the following open-source libraries:
 - **SDL (Simple DirectMedia Layer)** - Cross-platform multimedia library
   - Ported to Xbox 360 as libSDLx360 (also referred to as libSDL360x)
   - Copyright (C) 1997-2002 Sam Lantinga
+  - Source code available separately at: https://github.com/frankischilling/libSDLx360
 
 - **libpng** - PNG image format library
   - Version 1.4.0
@@ -112,6 +113,19 @@ You should have received a copy of the GNU General Public License along with thi
 - `dependencies/` - Third-party dependencies
 - `Skin/` - Xbox 360 UI skin files
 
+### Technical Notes
+
+**emucrc32.c Implementation:**
+
+This project uses `emucrc32.c`, a portable CRC32 wrapper originally developed for [snes360-enhanced](https://github.com/frankischilling/snes360-enhanced). This file provides a flexible CRC32 implementation that can work with or without zlib:
+
+- When `HAVE_ZLIB` is defined, it uses zlib's `crc32()` function
+- When `EMUCRC32_STANDALONE` is defined, it uses a self-contained CRC32 implementation
+- Provides compatibility functions (`emu_crc32()`, `calc_crc32()`) expected by older emulator codebases
+- Also provides `crc32()` wrapper for unzip code compatibility
+
+This shared implementation ensures consistent CRC32 handling across both snes360-enhanced and vba360-enhanced projects.
+
 ## Current Status
 
 ✅ **Build Status: The project now builds and runs successfully on Xbox 360!**
@@ -125,6 +139,7 @@ This project has completed the initial phase of fixing compilation and build iss
 - Added missing zlib source files (`crc32.c`, `explode.c`, `unreduce.c`, `unshrink.c`)
 - Added stub implementation for `SDL_AppActiveInit`
 - Created Xbox 360 image configuration file (`xex.xml`)
+- Uses `emucrc32.c` - A portable CRC32 wrapper originally developed for [snes360-enhanced](https://github.com/frankischilling/snes360-enhanced) and now shared across both projects
 
 **Next Steps:** With the build issues resolved, the next phase will focus on adding new features and improvements to enhance the emulator's functionality and user experience.
 
@@ -159,5 +174,4 @@ Special thanks to:
 - The Xbox 360 homebrew development community
 
 ---
-
-**Note:** This project is not affiliated with, endorsed by, or associated with Nintendo, Microsoft, or any other company. Game Boy and Game Boy Advance are trademarks of Nintendo Co., Ltd.
+**Note:** This project is not affiliated with, endorsed by, or associated with Nintendo, Microsoft, or any other company. Game Boy and Game Boy Advance are trademarks of Nintendo Co., Ltd., or associated with Nintendo, Microsoft, or any other company. Game Boy and Game Boy Advance are trademarks of Nintendo Co., Ltd.
