@@ -81,6 +81,7 @@ static int XBOX_SetHWAlpha(_THIS, SDL_Surface *surface, Uint8 alpha);
 static int XBOX_SetHWColorKey(_THIS, SDL_Surface *surface, Uint32 key);
 static int XBOX_SetFlickerFilter(_THIS, SDL_Surface *surface, int filter);
 static int XBOX_SetSoftDisplayFilter(_THIS, SDL_Surface *surface, int enabled);
+static int XBOX_SetGammaRamp(_THIS, Uint16 *ramp);
 
 
 /* The functions used to manipulate software video overlays */
@@ -191,7 +192,7 @@ static SDL_VideoDevice *XBOX_CreateDevice(int devindex)
 	device->VideoInit = XBOX_VideoInit;
 	device->ListModes = XBOX_ListModes;
 	device->SetVideoMode = XBOX_SetVideoMode;
-	device->CreateYUVOverlay = XBOX_CreateYUVOverlay;
+	device->CreateYUVOverlay = NULL;
 	device->SetColors = XBOX_SetColors;
 	device->UpdateRects = XBOX_UpdateRects;
 	device->VideoQuit = XBOX_VideoQuit;
@@ -212,6 +213,7 @@ static SDL_VideoDevice *XBOX_CreateDevice(int devindex)
 	device->InitOSKeymap = XBOX_InitOSKeymap;
 	device->PumpEvents = XBOX_PumpEvents;
 	device->free = XBOX_DeleteDevice;
+	device->SetGammaRamp = XBOX_SetGammaRamp;
 
 	return device;
 }
@@ -233,11 +235,14 @@ int XBOX_VideoInit(_THIS, SDL_PixelFormat *vformat)
 
 	D3D_PP.BackBufferWidth = 1280;
 	D3D_PP.BackBufferHeight = 720;
-	D3D_PP.BackBufferFormat = D3DFMT_X8R8G8B8;
+	D3D_PP.BackBufferFormat = D3DFMT_A8R8G8B8;
 	D3D_PP.PresentationInterval = D3DPRESENT_INTERVAL_ONE ;
  
 	if (!D3D_Device)
-		IDirect3D9_CreateDevice(D3D,0,D3DDEVTYPE_HAL,NULL,D3DCREATE_HARDWARE_VERTEXPROCESSING,&D3D_PP,&D3D_Device);
+		IDirect3D9_CreateDevice(D3D,0,D3DDEVTYPE_HAL,NULL,D3DCREATE_NO_SHADER_PATCHING ,&D3D_PP,&D3D_Device);
+	else
+		D3DDevice_Reset(D3D_Device, &D3D_PP);
+
 
 	vformat->BitsPerPixel = 32;
 	vformat->BytesPerPixel = 4;
@@ -256,36 +261,53 @@ int XBOX_VideoInit(_THIS, SDL_PixelFormat *vformat)
 
 const static SDL_Rect
 	RECT_1280x720 = {0,0,1280,720},
+	RECT_1024x768 = {0,0,1024,768},
 	RECT_800x600 = {0,0,800,600},
 	RECT_640x480 = {0,0,640,480},
+	RECT_640x400 = {0,0,640,400},
 	RECT_512x384 = {0,0,512,384},
-	RECT_400x300 = {0,0,400,300},
+    RECT_480x320 = {0,0,480,320},
+	RECT_400x300 = {0,0,400,300},	
 	RECT_320x240 = {0,0,320,240},
-	RECT_320x200 = {0,0,320,200};
+	RECT_320x200 = {0,0,320,200},
+	RECT_240x160 = {0,0,240,160};
 const static SDL_Rect *vid_modes[] = {
 	&RECT_1280x720,
+	&RECT_1024x768,
 	&RECT_800x600,
 	&RECT_640x480,
+	&RECT_640x400,
 	&RECT_512x384,
+    &RECT_480x320,
 	&RECT_400x300,
 	&RECT_320x240,
 	&RECT_320x200,
+	&RECT_240x160,
 	NULL
 };
 
 
 SDL_Rect **XBOX_ListModes(_THIS, SDL_PixelFormat *format, Uint32 flags)
 {
-	return &vid_modes;
+	return (SDL_Rect **)vid_modes;
 }
 
 SDL_Surface *XBOX_SetVideoMode(_THIS, SDL_Surface *current,
 				int width, int height, int bpp, Uint32 flags)
 {
 
+	RECT drawRect;
+	float screenAspect;
 	void *pLockedVertexBuffer;
+	unsigned int afterRenderWidth;
+	unsigned int afterRenderHeight;
+	float renderWidthCalc;
+	float renderHeightCalc;
 	float tX = 1;
 	float tY = 1;
+	float xFactor;
+	float yFactor;
+	float minFactor;
   
 	VERTEX a;
 	VERTEX b;
@@ -299,10 +321,14 @@ SDL_Surface *XBOX_SetVideoMode(_THIS, SDL_Surface *current,
 
 	switch(bpp)
 	{
-		case 8:
-			bpp = 16;
+		case 15:
 			pitch = width*2;
-			pixel_mode = D3DFMT_LIN_R5G6B5;
+			Rmask = 0x00007c00;
+			Gmask = 0x000003e0;
+			Bmask = 0x0000001f;
+			pixel_mode = D3DFMT_LIN_X1R5G5B5;
+			break;
+		case 8:
 		case 16:
 			pitch = width*2;
 			Rmask = 0x0000f800;
@@ -311,9 +337,6 @@ SDL_Surface *XBOX_SetVideoMode(_THIS, SDL_Surface *current,
 			pixel_mode = D3DFMT_LIN_R5G6B5;
 			break;
 		case 24:
-			pitch = width*4;
-			bpp = 32;
-			pixel_mode = D3DFMT_LIN_X8R8G8B8;
 		case 32:
 			pitch = width*4;
 			pixel_mode = D3DFMT_LIN_X8R8G8B8;
@@ -342,11 +365,8 @@ SDL_Surface *XBOX_SetVideoMode(_THIS, SDL_Surface *current,
 		return(NULL);
 	}
 
-	//if (have_vertexbuffer) {
-	//	D3DResource_Release((D3DResource*)SDL_vertexbuffer);
-	//}
-
-	    // Compile pixel shader.
+ 
+   // Compile pixel shader.
 
    D3DXCompileShader( g_strPixelShaderProgram,
                             ( UINT )strlen( g_strPixelShaderProgram ),
@@ -390,7 +410,7 @@ SDL_Surface *XBOX_SetVideoMode(_THIS, SDL_Surface *current,
     }
  	 
 	IDirect3DDevice9_CreateVertexDeclaration(D3D_Device,decl,&vertexDeclaration);
-	IDirect3DDevice9_CreateVertexBuffer(D3D_Device,sizeof(triangleStripVertices), D3DUSAGE_WRITEONLY,0L, D3DPOOL_DEFAULT, &vertexBuffer, NULL );
+	IDirect3DDevice9_CreateVertexBuffer(D3D_Device,sizeof(triangleStripVertices), D3DUSAGE_CPU_CACHED_MEMORY,0L, D3DPOOL_DEFAULT, &vertexBuffer, NULL );
 
 	D3DDevice_SetVertexShader(D3D_Device, g_pGradientVertexShader );
 	D3DDevice_SetPixelShader(D3D_Device, g_pPixelShader);
@@ -403,29 +423,65 @@ SDL_Surface *XBOX_SetVideoMode(_THIS, SDL_Surface *current,
   
 	IDirect3DVertexBuffer9_Lock(vertexBuffer, 0, 0, (BYTE **)&pLockedVertexBuffer, 0L );	 
 
-	a.x = (float)0 - 0.5f;
-	a.y = (float)D3D_PP.BackBufferHeight - 0.5f;
+	if ( flags & SDL_RESIZABLE)
+	{
+		screenAspect = (float)(float)width /height;
+
+		afterRenderWidth = width << 1; 
+		afterRenderHeight = height << 1;
+
+		renderWidthCalc = (float)afterRenderWidth;
+		renderHeightCalc = (float)afterRenderHeight;
+		if(renderWidthCalc/renderHeightCalc>screenAspect)
+			renderWidthCalc = renderHeightCalc * screenAspect;
+		else if(renderWidthCalc/renderHeightCalc<screenAspect)
+			renderHeightCalc = renderWidthCalc / screenAspect;
+
+		xFactor = (float)D3D_PP.BackBufferWidth / renderWidthCalc;
+		yFactor = (float)D3D_PP.BackBufferHeight / renderHeightCalc;
+		minFactor = xFactor < yFactor ? xFactor : yFactor;
+
+
+		drawRect.right = (LONG)(renderWidthCalc * minFactor);
+		drawRect.bottom = (LONG)(renderHeightCalc * minFactor);
+
+		drawRect.left = (D3D_PP.BackBufferWidth - drawRect.right) / 2;
+		drawRect.top = (D3D_PP.BackBufferHeight - drawRect.bottom) / 2;
+
+		drawRect.right += drawRect.left;
+		drawRect.bottom += drawRect.top;
+	}
+	else
+	{
+		drawRect.top = 40;
+		drawRect.left = 80;
+		drawRect.right = D3D_PP.BackBufferWidth - 80;
+		drawRect.bottom = D3D_PP.BackBufferHeight- 40;
+	}
+
+	a.x = (float)drawRect.left - 0.5f;
+	a.y = (float)drawRect.bottom - 0.5f;
 	a.z = 0;
 	a.rhw = 1;
 	a.tx = 0;
 	a.ty = tY;
 
-	b.x = (float)0 - 0.5f;
-	b.y = (float)0 - 0.5f;
+	b.x = (float)drawRect.left - 0.5f;
+	b.y = (float)drawRect.top - 0.5f;
 	b.z = 0;
 	b.rhw = 1;
 	b.tx = 0;
 	b.ty = 0;
 
-	c.x = (float)D3D_PP.BackBufferWidth - 0.5f;
-	c.y = (float)D3D_PP.BackBufferHeight - 0.5f;
+	c.x = (float)drawRect.right - 0.5f;
+	c.y = (float)drawRect.bottom - 0.5f;
 	c.z = 0;
 	c.rhw = 1;
 	c.tx = tX;
 	c.ty = tY;
 
-	d.x = (float)D3D_PP.BackBufferWidth - 0.5f;
-	d.y = (float)0 - 0.5f;
+	d.x = (float)drawRect.right - 0.5f;
+	d.y = (float)drawRect.top - 0.5f;
 	d.z = 0;
 	d.rhw = 1;
 	d.tx = tX;
@@ -451,10 +507,6 @@ SDL_Surface *XBOX_SetVideoMode(_THIS, SDL_Surface *current,
 
 	if (flags & SDL_DOUBLEBUF)
 		current->flags |= SDL_DOUBLEBUF;
-	if (flags & SDL_HWPALETTE)
-		current->flags |= SDL_HWPALETTE;
-
-
 
 	current->w = width;
 	current->h = height;
@@ -484,11 +536,17 @@ static void XBOX_FreeHWSurface(_THIS, SDL_Surface *surface)
 static int XBOX_RenderSurface(_THIS, SDL_Surface *surface)
 {
 	static int    i = 0;
-
-	IDirect3DDevice9_Clear(D3D_Device, 0, NULL, D3DCLEAR_TARGET , 0x00000000, 1.0f, 0L);
 	
+	D3DDevice_SetVertexShader(D3D_Device, NULL );
+	D3DDevice_SetPixelShader(D3D_Device, NULL);
+	D3DDevice_SetVertexDeclaration(D3D_Device, NULL);
  
     // Render the image
+
+	D3DDevice_SetVertexShader(D3D_Device, g_pGradientVertexShader );
+	D3DDevice_SetPixelShader(D3D_Device, g_pPixelShader);
+	D3DDevice_SetVertexDeclaration(D3D_Device, g_pGradientVertexDecl);
+
     IDirect3DDevice9_DrawPrimitive(D3D_Device,  D3DPT_TRIANGLESTRIP, 0, 2 ); 
 	IDirect3DDevice9_Present(D3D_Device,NULL,NULL,NULL,NULL);
 
@@ -552,6 +610,15 @@ static void XBOX_UpdateRects(_THIS, int numrects, SDL_Rect *rects)
 		return;
 
     // Render the image
+	D3DDevice_SetVertexShader(D3D_Device, NULL );
+	D3DDevice_SetPixelShader(D3D_Device, NULL);
+	D3DDevice_SetVertexDeclaration(D3D_Device, NULL);
+ 
+    // Render the image
+
+	D3DDevice_SetVertexShader(D3D_Device, g_pGradientVertexShader );
+	D3DDevice_SetPixelShader(D3D_Device, g_pPixelShader);
+	D3DDevice_SetVertexDeclaration(D3D_Device, g_pGradientVertexDecl);
 
 	IDirect3DDevice9_DrawPrimitive(D3D_Device,  D3DPT_TRIANGLESTRIP, 0, 2 ); 
 	IDirect3DDevice9_Present(D3D_Device,NULL,NULL,NULL,NULL);
@@ -574,9 +641,51 @@ void XBOX_VideoQuit(_THIS)
         IDirect3DDevice9_SetTexture(D3D_Device, 0, NULL);
 		IDirect3DDevice9_SetStreamSource(D3D_Device, 0,NULL, 0, 0);	
 		IDirect3DTexture9_Release(this->hidden->SDL_primary);
+
+		D3DDevice_SetVertexShader(D3D_Device, NULL );
+		D3DDevice_SetPixelShader(D3D_Device, NULL);
+		D3DDevice_SetVertexDeclaration(D3D_Device, NULL);
 	 }
 
-	 this->screen->pixels = NULL;
+	 if (g_pGradientVertexDecl)
+	 {
+		D3DVertexDeclaration_Release(g_pGradientVertexDecl);
+		g_pGradientVertexDecl = NULL;
+	 }
+
+	 if (g_pGradientVertexShader)
+	 {
+		D3DVertexShader_Release(g_pGradientVertexShader);
+		g_pGradientVertexShader = NULL;
+	 }
+
+	 if (g_pGradientVertexShader)
+	 {
+	    D3DVertexShader_Release(g_pGradientVertexShader);		 
+		g_pGradientVertexShader = NULL;
+
+	 }
+
+	 if (g_pPixelShader)
+	 {
+		 D3DPixelShader_Release(g_pPixelShader);
+		 g_pPixelShader = NULL;
+	 }
+
+	 if (vertexBuffer)
+	 {
+		 D3DVertexBuffer_Release(vertexBuffer);
+		 vertexBuffer = NULL;
+	 }
+
+	if (vertexDeclaration)
+	{
+		D3DVertexDeclaration_Release(vertexDeclaration);
+		vertexDeclaration = NULL;
+	}
+
+ 	this->screen->pixels = NULL;
+	 
 }
 
 static int XBOX_SetHWAlpha(_THIS, SDL_Surface *surface, Uint8 alpha)
@@ -762,6 +871,32 @@ void XBOX_UnlockYUVOverlay(_THIS, SDL_Overlay *overlay)
 	IDirect3DTexture9_UnlockRect(surface, 0);
 
 }
+
+static int XBOX_SetGammaRamp(_THIS, Uint16 *ramp)
+{
+	int i;
+	int idx = 1;
+	int scale = 256;
+	D3DGAMMARAMP gammaRamp;
+
+	if (ramp)
+	{ 
+		for (  i = 0 ;i < (256); i++)
+		{
+			gammaRamp.red[i] = ramp[i];
+			gammaRamp.green[i] = ramp[i+256];
+			gammaRamp.blue[i] = ramp[i+512];
+		}
+ 
+		/* Set up the gamma ramp */
+		IDirect3DDevice9_SetGammaRamp(D3D_Device,0,D3DSGR_IMMEDIATE,&gammaRamp);	
+ 
+	}
+		 
+	return 0;
+
+}
+
 void XBOX_FreeYUVOverlay(_THIS, SDL_Overlay *overlay)
 {
 
@@ -778,4 +913,3 @@ void XBOX_FreeYUVOverlay(_THIS, SDL_Overlay *overlay)
 
 
 }
-
