@@ -386,8 +386,8 @@ void SDL_SYS_JoystickUpdate(SDL_Joystick *joystick)
 			if (joystick->buttons[9])
 				SDL_PrivateJoystickButton(joystick, (Uint8)9, SDL_RELEASED);
 		}
-
-		if (joystick->hwdata->pGamepads.wButtons & XINPUT_GAMEPAD_LEFT_THUMB)
+		/* left trigger -> button 10 */
+		if (joystick->hwdata->pGamepads.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD)
 		{
 			if (!joystick->buttons[10])
 				SDL_PrivateJoystickButton(joystick, (Uint8)10, SDL_PRESSED);
@@ -398,7 +398,8 @@ void SDL_SYS_JoystickUpdate(SDL_Joystick *joystick)
 				SDL_PrivateJoystickButton(joystick, (Uint8)10, SDL_RELEASED);
 		}
 
-		if (joystick->hwdata->pGamepads.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB)
+		/* right trigger -> button 11 (fast-forward) */
+		if (joystick->hwdata->pGamepads.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD)
 		{
 			if (!joystick->buttons[11])
 				SDL_PrivateJoystickButton(joystick, (Uint8)11, SDL_PRESSED);
@@ -408,8 +409,6 @@ void SDL_SYS_JoystickUpdate(SDL_Joystick *joystick)
 			if (joystick->buttons[11])
 				SDL_PrivateJoystickButton(joystick, (Uint8)11, SDL_RELEASED);
 		}
-
-			
 
        
 
