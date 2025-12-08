@@ -57,11 +57,10 @@ sf::IPAddress joybusHostAddr = sf::IPAddress::LocalHost;
 int linktime = 0;
 u8 tspeed = 3;
 u8 transfer = 0;
-LINKDATA *linkmem = NULL;
+LINKDATA linkmem;
 int linkid = 0, vbaid = 0;
 HANDLE linksync[4];
 int savedlinktime = 0;
-HANDLE mmf = NULL;
 char linkevent[] = "VBA link event  ";
 static int i, j;
 int linktimeout = 1000;
@@ -76,7 +75,7 @@ bool oncewait = false, after = false;
 bool rfu_enabled = false;
 u8 rfu_cmd, rfu_qsend, rfu_qrecv;
 int rfu_state, rfu_polarity, linktime2, rfu_counter, rfu_masterq;
-// numtransfers seems to be used interchangeably with linkmem->numtransfers
+// numtransfers seems to be used interchangeably with linkmem.numtransfers
 // probably a bug?
 int rfu_transfer_end, numtransfers = 0;
 u32 rfu_masterdata[32];
@@ -157,19 +156,19 @@ void StartLink(u16 value)
 							after = false;
 						}
 					}
-					else if (linkmem->numgbas > 1)
+					else if (linkmem.numgbas > 1)
 					{
 						ResetEvent(linksync[0]);
-						linkmem->linkcmd[0] = ('M' << 8) + (value & 3);
-						linkmem->linkdata[0] = READ16LE(&ioMem[COMM_SIODATA8]);
+						linkmem.linkcmd[0] = ('M' << 8) + (value & 3);
+						linkmem.linkdata[0] = READ16LE(&ioMem[COMM_SIODATA8]);
 
-						if (linkmem->numtransfers != 0)
-							linkmem->lastlinktime = linktime;
+						if (linkmem.numtransfers != 0)
+							linkmem.lastlinktime = linktime;
 						else
-							linkmem->lastlinktime = 0;
+							linkmem.lastlinktime = 0;
 
-						if ((++linkmem->numtransfers) == 0)
-							linkmem->numtransfers = 2;
+						if ((++linkmem.numtransfers) == 0)
+							linkmem.numtransfers = 2;
 						transfer = 1;
 						linktime = 0;
 						tspeed = value & 3;
@@ -389,28 +388,31 @@ void LinkUpdate(int ticks)
 		return;
 	}
 
-	// ** CRASH ** linkmem is NULL, todo investigate why, added null check
-	if (linkid && !transfer && linkmem && linktime >= linkmem->lastlinktime && linkmem->numtransfers)
+	// Legacy shared memory path (Windows only - not used on Xbox)
+	// Xbox 360: All connections should use lanlink.active networking path above
+	// This path is kept for Windows backward compatibility
+#ifndef _XBOX
+	if (linkid && !transfer && linktime >= linkmem.lastlinktime && linkmem.numtransfers)
 	{
-		linkmem->linkdata[linkid] = READ16LE(&ioMem[COMM_SIODATA8]);
+		linkmem.linkdata[linkid] = READ16LE(&ioMem[COMM_SIODATA8]);
 
-		if (linkmem->numtransfers == 1)
+		if (linkmem.numtransfers == 1)
 		{
 			linktime = 0;
 #ifndef _XBOX
 #ifndef _XBOX
 			if (WaitForSingleObject(linksync[linkid], linktimeout) == WAIT_TIMEOUT)
-				linkmem->numtransfers = 0;
+				linkmem.numtransfers = 0;
 #endif
 #endif
 		}
 		else
-			linktime -= linkmem->lastlinktime;
+			linktime -= linkmem.lastlinktime;
 
-		switch ((linkmem->linkcmd[0]) >> 8)
+		switch ((linkmem.linkcmd[0]) >> 8)
 		{
 		case 'M':
-			tspeed = (linkmem->linkcmd[0]) & 3;
+			tspeed = (linkmem.linkcmd[0]) & 3;
 			transfer = 1;
 			WRITE32LE(&ioMem[COMM_SIODATA32_L], 0xffffffff);
 			WRITE32LE(&ioMem[0x124], 0xffffffff);
@@ -422,7 +424,7 @@ void LinkUpdate(int ticks)
 	if (!transfer)
 		return;
 
-	if (transfer && linktime >= trtimedata[transfer-1][tspeed] && transfer <= linkmem->numgbas)
+	if (transfer && linktime >= trtimedata[transfer-1][tspeed] && transfer <= linkmem.numgbas)
 	{
 		if (transfer-linkid == 2)
 		{
@@ -432,7 +434,7 @@ void LinkUpdate(int ticks)
 #endif
 #ifndef _XBOX
 			if (WaitForSingleObject(linksync[linkid], linktimeout) == WAIT_TIMEOUT)
-				linkmem->numtransfers = 0;
+				linkmem.numtransfers = 0;
 #endif
 #ifndef _XBOX
 			ResetEvent(linksync[linkid]);
@@ -440,13 +442,13 @@ void LinkUpdate(int ticks)
 #endif
 		}
 
-		UPDATE_REG(0x11e + (transfer<<1), linkmem->linkdata[transfer-1]);
+		UPDATE_REG(0x11e + (transfer<<1), linkmem.linkdata[transfer-1]);
 		transfer++;
 	}
 
-	if (transfer && linktime >= trtimeend[linkmem->numgbas-2][tspeed])
+	if (transfer && linktime >= trtimeend[linkmem.numgbas-2][tspeed])
 	{
-		if (linkid == linkmem->numgbas-1)
+		if (linkid == linkmem.numgbas-1)
 		{
 #ifndef _XBOX
 #ifndef _XBOX
@@ -454,7 +456,7 @@ void LinkUpdate(int ticks)
 #endif
 #ifndef _XBOX
 			if (WaitForSingleObject(linksync[linkid], linktimeout) == WAIT_TIMEOUT)
-				linkmem->numtransfers = 0;
+				linkmem.numtransfers = 0;
 #endif
 
 #ifndef _XBOX
@@ -472,8 +474,9 @@ void LinkUpdate(int ticks)
 			UPDATE_REG(0x202, IF);
 		}
 		UPDATE_REG(COMM_SIOCNT, (READ16LE(&ioMem[COMM_SIOCNT]) & 0xff0f) | (linkid << 4));
-		linkmem->linkdata[linkid] = 0xffff;
+		linkmem.linkdata[linkid] = 0xffff;
 	}
+#endif // _XBOX - Legacy shared memory path not used on Xbox
 
 	return;
 }
@@ -539,7 +542,7 @@ u16 StartRFU(u16 value)
 						rfu_counter = 0;
 					}
 					if (rfu_cmd == 0x25 || rfu_cmd == 0x24) {
-						linkmem->rfu_q[vbaid] = rfu_qsend;
+						linkmem.rfu_q[vbaid] = rfu_qsend;
 					}
 					UPDATE_REG(COMM_SIODATA32_L, 0);
 					UPDATE_REG(COMM_SIODATA32_H, 0x8000);
@@ -548,7 +551,7 @@ u16 StartRFU(u16 value)
 				{
 					switch (rfu_cmd) {
 					case 0x1a:	// check if someone joined
-						if (linkmem->rfu_request[vbaid] != 0) {
+						if (linkmem.rfu_request[vbaid] != 0) {
 							rfu_state = RFU_RECV;
 							rfu_qrecv = 1;
 						}
@@ -566,12 +569,12 @@ u16 StartRFU(u16 value)
 						break;
 
 					case 0x30:
-						linkmem->rfu_request[vbaid] = 0;
-						linkmem->rfu_q[vbaid] = 0;
+						linkmem.rfu_request[vbaid] = 0;
+						linkmem.rfu_q[vbaid] = 0;
 						linkid = 0;
 						numtransfers = 0;
 						rfu_cmd |= 0x80;
-						if (linkmem->numgbas == 2)
+						if (linkmem.numgbas == 2)
 #ifndef _XBOX
 							SetEvent(linksync[1-vbaid]);
 #endif
@@ -591,7 +594,7 @@ u16 StartRFU(u16 value)
 						if(linkid>0){
 							rfu_qrecv = rfu_masterq;
 						}
-						if((rfu_qrecv=linkmem->rfu_q[1-vbaid])!=0){
+						if((rfu_qrecv=linkmem.rfu_q[1-vbaid])!=0){
 							rfu_state = RFU_RECV;
 							rfu_counter = 0;
 						}
@@ -600,8 +603,8 @@ u16 StartRFU(u16 value)
 
 					case 0x24:	// send data
 						if((numtransfers++)==0) linktime = 1;
-						linkmem->rfu_linktime[vbaid] = linktime;
-						if(linkmem->numgbas==2){
+						linkmem.rfu_linktime[vbaid] = linktime;
+						if(linkmem.numgbas==2){
 #ifndef _XBOX
 							SetEvent(linksync[1-vbaid]);
 #endif
@@ -630,10 +633,10 @@ u16 StartRFU(u16 value)
 					case 0xa7:	//	2nd part of wait function 0x27
 						if (linkid == -1) {
 							linkid++;
-							linkmem->rfu_linktime[vbaid] = 0;
+							linkmem.rfu_linktime[vbaid] = 0;
 						}
-						if (linkid&&linkmem->rfu_request[1-vbaid] == 0) {
-							linkmem->rfu_q[1-vbaid] = 0;
+						if (linkid&&linkmem.rfu_request[1-vbaid] == 0) {
+							linkmem.rfu_q[1-vbaid] = 0;
 							rfu_transfer_end = 256;
 							rfu_polarity = 1;
 							rfu_cmd = 0x29;
@@ -642,8 +645,8 @@ u16 StartRFU(u16 value)
 						}
 						if ((numtransfers++) == 0)
 							linktime = 0;
-						linkmem->rfu_linktime[vbaid] = linktime;
-						if (linkmem->numgbas == 2) {
+						linkmem.rfu_linktime[vbaid] = linktime;
+						if (linkmem.numgbas == 2) {
 							if (!linkid || (linkid && numtransfers))
 	#ifndef _XBOX
 							SetEvent(linksync[1-vbaid]);
@@ -654,10 +657,10 @@ u16 StartRFU(u16 value)
 							ResetEvent(linksync[vbaid]);
 						}
 						if ( linkid > 0) {
-							memcpy(rfu_masterdata, linkmem->rfu_data[1-vbaid], 128);
-							rfu_masterq = linkmem->rfu_q[1-vbaid];
+							memcpy(rfu_masterdata, linkmem.rfu_data[1-vbaid], 128);
+							rfu_masterq = linkmem.rfu_q[1-vbaid];
 						}
-						rfu_transfer_end = linkmem->rfu_linktime[1-vbaid] - linktime + 256;
+						rfu_transfer_end = linkmem.rfu_linktime[1-vbaid] - linktime + 256;
 						
 						if (rfu_transfer_end < 256)
 							rfu_transfer_end = 256;
@@ -683,7 +686,7 @@ u16 StartRFU(u16 value)
 
 				switch (rfu_cmd) {
 				case 0x16:
-					linkmem->rfu_bdata[vbaid][rfu_counter++] = READ32LE(&ioMem[COMM_SIODATA32_L]);
+					linkmem.rfu_bdata[vbaid][rfu_counter++] = READ32LE(&ioMem[COMM_SIODATA32_L]);
 					break;
 
 				case 0x17:
@@ -691,12 +694,12 @@ u16 StartRFU(u16 value)
 					break;
 
 				case 0x1f:
-					linkmem->rfu_request[1-vbaid] = 1;
+					linkmem.rfu_request[1-vbaid] = 1;
 					break;
 
 				case 0x24:
 				case 0x25:
-					linkmem->rfu_data[vbaid][rfu_counter++] = READ32LE(&ioMem[COMM_SIODATA32_L]);
+					linkmem.rfu_data[vbaid][rfu_counter++] = READ32LE(&ioMem[COMM_SIODATA32_L]);
 					break;
 				}
 				UPDATE_REG(COMM_SIODATA32_L, 0);
@@ -716,8 +719,8 @@ u16 StartRFU(u16 value)
 						rfu_counter++;
 						break;
 					}
-					UPDATE_REG(COMM_SIODATA32_L, linkmem->rfu_bdata[1-vbaid][rfu_counter-1]&0xffff);
-					UPDATE_REG(COMM_SIODATA32_H, linkmem->rfu_bdata[1-vbaid][rfu_counter-1]>>16);
+					UPDATE_REG(COMM_SIODATA32_L, linkmem.rfu_bdata[1-vbaid][rfu_counter-1]&0xffff);
+					UPDATE_REG(COMM_SIODATA32_H, linkmem.rfu_bdata[1-vbaid][rfu_counter-1]>>16);
 					rfu_counter++;
 					break;
 
@@ -726,8 +729,8 @@ u16 StartRFU(u16 value)
 					UPDATE_REG(COMM_SIODATA32_L, rfu_masterdata[rfu_counter]&0xffff);
 					UPDATE_REG(COMM_SIODATA32_H, rfu_masterdata[rfu_counter++]>>16);
 				} else {
-					UPDATE_REG(COMM_SIODATA32_L, linkmem->rfu_data[1-vbaid][rfu_counter]&0xffff);
-					UPDATE_REG(COMM_SIODATA32_H, linkmem->rfu_data[1-vbaid][rfu_counter++]>>16);
+					UPDATE_REG(COMM_SIODATA32_L, linkmem.rfu_data[1-vbaid][rfu_counter]&0xffff);
+					UPDATE_REG(COMM_SIODATA32_H, linkmem.rfu_data[1-vbaid][rfu_counter++]>>16);
 				}
 				break;
 
@@ -775,7 +778,11 @@ u16 StartRFU(u16 value)
 
 int InitLink()
 {
+	// Initialize link state - no file mapping, using in-memory structure only
 	linkid = 0;
+	vbaid = 0;
+	
+	// Reset LAN link state
 	lanlink.tcpsocket.Close();
 	lanlink.connected = false;
 	lanlink.terminate = false;
@@ -785,115 +792,44 @@ int InitLink()
 	lanlink.speed = false;
 	lanlink.thread = NULL;
 
-#ifdef _XBOX
-	// Xbox 360: Use SFML sockets directly, no file mapping needed
-	linkmem = new LINKDATA;
-	memset(linkmem, 0, sizeof(LINKDATA));
-	vbaid = 0;
-	linkmem->numgbas = 1;
-	linkmem->linkflags = 0;
-	for(int j=0;j<4;j++){
-		linksync[j] = NULL;
+	// Initialize in-memory link data structure (no file mapping)
+	// Note: For Xbox 360, all connections (even local multiplayer) use SFML networking
+	// The linkmem structure is only used for local state tracking, not inter-instance communication
+	memset(&linkmem, 0, sizeof(LINKDATA));
+	
+	// Set initial values
+	linkmem.numgbas = 1;
+	linkmem.linkflags = 0;
+	linkmem.lastlinktime = 0xffffffff;
+	linkmem.numtransfers = 0;
+	
+	// Initialize link data arrays
+	for(i=0;i<4;i++){
+		linkmem.linkdata[i] = 0xffff;
+		linkdata[i] = 0xffff;
 	}
-	return 1;
-#else
-	if((mmf=CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(LINKDATA), "VBA link memory"))==NULL){
+	
 #ifndef _XBOX
-		MessageBox(NULL, "Error creating file mapping", "Error", MB_OK|MB_ICONEXCLAMATION);
-#endif
-		return 0;
-	}
-#endif
-
-#ifndef _XBOX
-	if(GetLastError() == ERROR_ALREADY_EXISTS)
-		vbaid = 1;
-	else
-		vbaid = 0;
-
-	if((linkmem=(LINKDATA *)MapViewOfFile(mmf, FILE_MAP_WRITE, 0, 0, sizeof(LINKDATA)))==NULL){
-		lanlink.tcpsocket.Close();
-		CloseHandle(mmf);
-#ifndef _XBOX
-		MessageBox(NULL, "Error mapping file", "Error", MB_OK|MB_ICONEXCLAMATION);
-#endif
-		return 0;
-	}
-#endif
-
-#ifndef _XBOX
-	if(linkmem->linkflags&LINK_PARENTLOST)
-		vbaid = 0;
-
-	if(vbaid==0){
-		linkid = 0;
-		if(linkmem->linkflags&LINK_PARENTLOST){
-			linkmem->numgbas++;
-			linkmem->linkflags &= ~LINK_PARENTLOST;
-		}
-		else
-			linkmem->numgbas=1;
-
-		for(i=0;i<4;i++){
-			linkevent[15]=(char)i+'1';
-			if((linksync[i]=CreateEvent(NULL, true, false, linkevent))==NULL){
-				lanlink.tcpsocket.Close();
-				UnmapViewOfFile(linkmem);
-				CloseHandle(mmf);
-				for(j=0;j<i;j++){
-					CloseHandle(linksync[j]);
-				}
-				MessageBox(NULL, "Error opening event", "Error", MB_OK|MB_ICONEXCLAMATION);
-				return 0;
-			}
-		}
-	} else {
-		vbaid=linkmem->numgbas;
-		linkid = vbaid;
-		linkmem->numgbas++;
-
-		if(linkmem->numgbas>4){
-			linkmem->numgbas=4;
+	// Windows: Initialize events for synchronization
+	for(i=0;i<4;i++){
+		linkevent[15]=(char)i+'1';
+		if((linksync[i]=CreateEvent(NULL, true, false, linkevent))==NULL){
 			lanlink.tcpsocket.Close();
-			MessageBox(NULL, "5 or more GBAs not supported.", "Error!", MB_OK|MB_ICONEXCLAMATION);
-			UnmapViewOfFile(linkmem);
-			CloseHandle(mmf);
+			for(j=0;j<i;j++){
+				CloseHandle(linksync[j]);
+			}
 			return 0;
 		}
-		for(i=0;i<4;i++){
-			linkevent[15]=(char)i+'1';
-			if((linksync[i]=OpenEvent(EVENT_ALL_ACCESS, false, linkevent))==NULL){
-				lanlink.tcpsocket.Close();
-				CloseHandle(mmf);
-				UnmapViewOfFile(linkmem);
-				for(j=0;j<i;j++){
-					CloseHandle(linksync[j]);
-				}
-				MessageBox(NULL, "Error opening event", "Error", MB_OK|MB_ICONEXCLAMATION);
-				return 0;
-			}
-		}
 	}
 #else
-	// Xbox: Initialize linkmem structure
-	linkmem->numgbas = 1;
-	linkmem->linkflags = 0;
-	// Xbox doesn't use Windows events - will use SFML networking
+	// Xbox 360: All connections use SFML networking (TCP sockets)
+	// No Windows events needed - networking handles all synchronization
+	// Multiple instances on same Xbox communicate via localhost networking
 	for(i=0;i<4;i++){
 		linksync[i] = NULL;
 	}
 #endif
 
-	linkmem->lastlinktime=0xffffffff;
-	linkmem->numtransfers=0;
-	linkmem->linkflags=0;
-	lanlink.connected = false;
-	lanlink.thread = NULL;
-	lanlink.speed = false;
-	for(i=0;i<4;i++){
-		linkmem->linkdata[i] = 0xffff;
-		linkdata[i] = 0xffff;
-	}
 	return 1;
 }
 
@@ -917,27 +853,21 @@ void CloseLink(void){
 			}
 		}
 	}
-#ifndef _XBOX
-	linkmem->numgbas--;
-	if(!linkid&&linkmem->numgbas!=0)
-		linkmem->linkflags|=LINK_PARENTLOST;
-	CloseHandle(mmf);
-	UnmapViewOfFile(linkmem);
+	
+	// No cleanup needed for in-memory structure
 
+#ifndef _XBOX
+	// Windows: Clean up events
 	for(i=0;i<4;i++){
 		if(linksync[i]!=NULL){
 			PulseEvent(linksync[i]);
 			CloseHandle(linksync[i]);
+			linksync[i] = NULL;
 		}
 	}
 	regSetDwordValue("LAN", lanlink.active);
-#else
-	// Xbox: Clean up allocated memory
-	if(linkmem){
-		delete linkmem;
-		linkmem = NULL;
-	}
 #endif
+	
 	lanlink.tcpsocket.Close();
 	return;
 }
@@ -954,7 +884,9 @@ lserver::lserver(void){
 
 int lserver::Init(void *serverdlg){
 #ifdef _XBOX
-	// Xbox: No Windows threading, will handle in main loop
+	// Xbox 360: All connections use SFML networking (even local multiplayer)
+	// Multiple instances on same Xbox communicate via localhost TCP sockets
+	// No Windows threading needed - will handle in main loop
 	lanlink.tcpsocket.Close();
 	if(lanlink.tcpsocket.Listen(5738) != sf::Socket::Done)
 		return -1;
@@ -1139,11 +1071,13 @@ lclient::lclient(void){
 
 int lclient::Init(sf::IPAddress hostaddr, void *waitdlg){
 #ifdef _XBOX
-	// Xbox: No Windows threading, will handle in main loop
+	// Xbox 360: All connections use SFML networking (even local multiplayer)
+	// Multiple instances on same Xbox communicate via localhost TCP sockets
+	// No Windows threading needed - will handle in main loop
 	if(hostaddr.IsValid())
 		serveraddr = hostaddr;
 	else
-		serveraddr = sf::IPAddress::LocalHost;
+		serveraddr = sf::IPAddress::LocalHost;  // Use localhost for local multiplayer
 	
 	lanlink.terminate = false;
 	lanlink.tcpsocket.Close();
