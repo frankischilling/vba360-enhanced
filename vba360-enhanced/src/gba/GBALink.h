@@ -1,6 +1,68 @@
 #pragma once
 
- 
+#include "SFML/Network.hpp"
+#include "../common/Types.h"
+
+#ifndef _WINDEF_
+typedef void* HANDLE;
+#endif
+
+struct LANLINKDATA
+{
+	sf::SocketTCP tcpsocket;
+	bool active;
+	bool connected;
+	bool terminate;
+	HANDLE thread;
+	int type;
+	int numgbas;
+	bool speed;
+};
+
+class lserver
+{
+public:
+	lserver(void);
+	int Init(void *serverdlg);
+	void Send(void);
+	void Recv(void);
+
+	sf::SocketTCP tcpsocket[4];
+	char inbuffer[256];
+	char outbuffer[256];
+	int *intinbuffer;
+	u16 *u16inbuffer;
+	int *intoutbuffer;
+	u16 *u16outbuffer;
+	int howmanytimes;
+	bool oncewait;
+};
+
+class lclient
+{
+public:
+	lclient(void);
+	int Init(sf::IPAddress hostaddr, void *waitdlg);
+	void CheckConn(void);
+	void Recv(void);
+	void Send(void);
+
+	sf::IPAddress serveraddr;
+	char inbuffer[256];
+	char outbuffer[256];
+	int *intinbuffer;
+	u16 *u16inbuffer;
+	int *intoutbuffer;
+	u16 *u16outbuffer;
+	int numtransfers;
+	bool oncesend;
+	int numbytes;
+};
+
+extern LANLINKDATA lanlink;
+extern lserver ls;
+extern lclient lc;
+
 #define LINK_PARENTLOST 0x80
 #define UNSUPPORTED -1
 #define MULTIPLAYER 0

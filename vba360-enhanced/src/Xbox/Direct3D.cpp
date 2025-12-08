@@ -6,12 +6,25 @@
 
 #include <xtl.h>
 #include <xui.h>
+#include <xgraphics.h>
 
 #include <tchar.h>
 #include "direct3d.h"
 #include "GeneralFunctions.h"
 #include "Storage.h"
 #include "RomList.h"
+#include "Main.h"
+
+// Use the active video mode to size the backbuffer so the image fills the screen.
+static void GetCurrentBackBufferSize(UINT &width, UINT &height)
+{
+	XVIDEO_MODE videoMode;
+	ZeroMemory(&videoMode, sizeof(videoMode));
+	XGetVideoMode(&videoMode);
+
+	width = videoMode.dwDisplayWidth ? videoMode.dwDisplayWidth : 1280;
+	height = videoMode.dwDisplayHeight ? videoMode.dwDisplayHeight : 720;
+}
 
 extern bool in_display_dlg;
 extern bool exitFromXUI;
@@ -129,10 +142,16 @@ bool CDirect3D::initialize(D3DDevice *pDev)
 	VOID* pCode = NULL;
     DWORD dwSize = 0;
 
+	UINT displayWidth = 0;
+	UINT displayHeight = 0;
+	GetCurrentBackBufferSize(displayWidth, displayHeight);
+
 	ZeroMemory(&dPresentParams, sizeof(dPresentParams));	  
 	dPresentParams.BackBufferFormat = D3DFMT_X8R8G8B8; 
-	dPresentParams.BackBufferWidth = 1280;
-	dPresentParams.BackBufferHeight = 720;
+	dPresentParams.BackBufferWidth = displayWidth;
+	dPresentParams.BackBufferHeight = displayHeight;
+	dPresentParams.BackBufferCount = 1;
+	dPresentParams.Windowed = false;
 	dPresentParams.PresentationInterval = D3DPRESENT_INTERVAL_ONE ;
  
 	pDevice->Reset(&dPresentParams);
@@ -586,9 +605,13 @@ bool CDirect3D::resetDevice()
 	//release prior to reset
 	destroyDrawSurface();
 
+	UINT displayWidth = 0;
+	UINT displayHeight = 0;
+	GetCurrentBackBufferSize(displayWidth, displayHeight);
+
 	//zero or unknown values result in the current window size/display settings
-	dPresentParams.BackBufferWidth = 1280;
-	dPresentParams.BackBufferHeight = 720;
+	dPresentParams.BackBufferWidth = displayWidth;
+	dPresentParams.BackBufferHeight = displayHeight;
 	dPresentParams.BackBufferCount = 1;
 	dPresentParams.BackBufferFormat = D3DFMT_X8R8G8B8;  
 	dPresentParams.Windowed = false;
