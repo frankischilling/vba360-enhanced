@@ -2,6 +2,7 @@
 #include "vba.h"
 #include "LinkOptions.h"
 #include "../gba/GBALink.h"
+#include "SFML/Network.hpp"
 
 extern int lspeed;
 extern lserver ls;
@@ -543,7 +544,8 @@ void LinkClient::OnLinkConnect()
 
 	m_serverip.GetWindowText(ipaddress, 30);
 
-	if((errorcode=lc.Init(gethostbyname(ipaddress), &dlg))!=0){
+	sf::IPAddress host(ipaddress);
+	if((errorcode=lc.Init(host, &dlg))!=0){
 		char message[50];
 		sprintf(message, "Error %d occured.\nPlease try again.", errorcode);
 		MessageBox(message, "Error", MB_OK);
