@@ -13,7 +13,12 @@ struct LANLINKDATA
 	bool active;
 	bool connected;
 	bool terminate;
+#ifdef _XBOX
+	// Xbox: No threading - handled in main loop
+	void* thread;  // Unused on Xbox, kept for compatibility
+#else
 	HANDLE thread;
+#endif
 	int type;
 	int numgbas;
 	bool speed;

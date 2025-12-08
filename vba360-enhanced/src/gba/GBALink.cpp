@@ -18,6 +18,23 @@
 #include "../win32/LinkOptions.h"
 #include "../win32/Reg.h"
 #endif
+#ifdef _XBOX
+#ifndef WAIT_TIMEOUT
+#define WAIT_TIMEOUT 0x00000102
+#endif
+#endif
+
+// Cross-platform link sync helpers. Windows keeps its event objects;
+// Xbox builds don't rely on them (network path only), so they become no-ops.
+#ifndef _XBOX
+#define LINK_WAIT_EVENT(h, t) WaitForSingleObject((h), (t))
+#define LINK_SET_EVENT(h) SetEvent((h))
+#define LINK_RESET_EVENT(h) ResetEvent((h))
+#else
+#define LINK_WAIT_EVENT(h, t) WAIT_TIMEOUT
+#define LINK_SET_EVENT(h) ((void)0)
+#define LINK_RESET_EVENT(h) ((void)0)
+#endif
 
 #define UPDATE_REG(address, value) WRITE16LE(((u16 *)&ioMem[address]),value)
 
@@ -98,7 +115,10 @@ int gbtime = 1024;
 
 int GetSIOMode(u16, u16);
 
-#ifndef _XBOX
+#ifdef _XBOX
+DWORD WINAPI LinkClientThread(void *waitdlg);
+DWORD WINAPI LinkServerThread(void *serverdlg);
+#else
 DWORD WINAPI LinkClientThread(void *);
 DWORD WINAPI LinkServerThread(void *);
 #endif
@@ -156,9 +176,10 @@ void StartLink(u16 value)
 							after = false;
 						}
 					}
+#ifndef _XBOX
 					else if (linkmem.numgbas > 1)
 					{
-						ResetEvent(linksync[0]);
+						LINK_RESET_EVENT(linksync[0]);
 						linkmem.linkcmd[0] = ('M' << 8) + (value & 3);
 						linkmem.linkdata[0] = READ16LE(&ioMem[COMM_SIODATA8]);
 
@@ -175,6 +196,7 @@ void StartLink(u16 value)
 						WRITE32LE(&ioMem[COMM_SIODATA32_L], 0xffffffff);
 						WRITE32LE(&ioMem[0x124], 0xffffffff);
 					}
+#endif
 				}
 			}
 			value &= 0xff7f;
@@ -399,12 +421,8 @@ void LinkUpdate(int ticks)
 		if (linkmem.numtransfers == 1)
 		{
 			linktime = 0;
-#ifndef _XBOX
-#ifndef _XBOX
-			if (WaitForSingleObject(linksync[linkid], linktimeout) == WAIT_TIMEOUT)
+			if (LINK_WAIT_EVENT(linksync[linkid], linktimeout) == WAIT_TIMEOUT)
 				linkmem.numtransfers = 0;
-#endif
-#endif
 		}
 		else
 			linktime -= linkmem.lastlinktime;
@@ -428,18 +446,10 @@ void LinkUpdate(int ticks)
 	{
 		if (transfer-linkid == 2)
 		{
-#ifndef _XBOX
-#ifndef _XBOX
-			SetEvent(linksync[linkid+1]);
-#endif
-#ifndef _XBOX
-			if (WaitForSingleObject(linksync[linkid], linktimeout) == WAIT_TIMEOUT)
+			LINK_SET_EVENT(linksync[linkid+1]);
+			if (LINK_WAIT_EVENT(linksync[linkid], linktimeout) == WAIT_TIMEOUT)
 				linkmem.numtransfers = 0;
-#endif
-#ifndef _XBOX
-			ResetEvent(linksync[linkid]);
-#endif
-#endif
+			LINK_RESET_EVENT(linksync[linkid]);
 		}
 
 		UPDATE_REG(0x11e + (transfer<<1), linkmem.linkdata[transfer-1]);
@@ -450,19 +460,10 @@ void LinkUpdate(int ticks)
 	{
 		if (linkid == linkmem.numgbas-1)
 		{
-#ifndef _XBOX
-#ifndef _XBOX
-			SetEvent(linksync[0]);
-#endif
-#ifndef _XBOX
-			if (WaitForSingleObject(linksync[linkid], linktimeout) == WAIT_TIMEOUT)
+			LINK_SET_EVENT(linksync[0]);
+			if (LINK_WAIT_EVENT(linksync[linkid], linktimeout) == WAIT_TIMEOUT)
 				linkmem.numtransfers = 0;
-#endif
-
-#ifndef _XBOX
-			ResetEvent(linksync[linkid]);
-#endif
-#endif
+			LINK_RESET_EVENT(linksync[linkid]);
 			
 		}
 
@@ -533,11 +534,11 @@ u16 StartRFU(u16 value)
 				UPDATE_REG(COMM_SIODATA32_L, a);
 				break;
 
-			case RFU_COMM:
-				if (a == 0x9966)
-				{
-					rfu_cmd = ioMem[COMM_SIODATA32_L];
-					if ((rfu_qsend=ioMem[0x121]) != 0) {
+		case RFU_COMM:
+			if (a == 0x9966)
+			{
+				rfu_cmd = ioMem[COMM_SIODATA32_L];
+				if ((rfu_qsend=ioMem[0x121]) != 0) {
 						rfu_state = RFU_SEND;
 						rfu_counter = 0;
 					}
@@ -568,17 +569,15 @@ u16 StartRFU(u16 value)
 						rfu_cmd |= 0x80;
 						break;
 
-					case 0x30:
-						linkmem.rfu_request[vbaid] = 0;
-						linkmem.rfu_q[vbaid] = 0;
-						linkid = 0;
-						numtransfers = 0;
-						rfu_cmd |= 0x80;
-						if (linkmem.numgbas == 2)
-#ifndef _XBOX
-							SetEvent(linksync[1-vbaid]);
-#endif
-						break;
+			case 0x30:
+				linkmem.rfu_request[vbaid] = 0;
+				linkmem.rfu_q[vbaid] = 0;
+				linkid = 0;
+				numtransfers = 0;
+				rfu_cmd |= 0x80;
+				if (linkmem.numgbas == 2)
+					LINK_SET_EVENT(linksync[1-vbaid]);
+				break;
 
 					case 0x11:	// ? always receives 0xff - I suspect it's something for 3+ players
 					case 0x13:	// unknown
@@ -605,13 +604,9 @@ u16 StartRFU(u16 value)
 						if((numtransfers++)==0) linktime = 1;
 						linkmem.rfu_linktime[vbaid] = linktime;
 						if(linkmem.numgbas==2){
-#ifndef _XBOX
-							SetEvent(linksync[1-vbaid]);
-#endif
-#ifndef _XBOX
-							WaitForSingleObject(linksync[vbaid], linktimeout);
-#endif
-							ResetEvent(linksync[vbaid]);
+							LINK_SET_EVENT(linksync[1-vbaid]);
+							LINK_WAIT_EVENT(linksync[vbaid], linktimeout);
+							LINK_RESET_EVENT(linksync[vbaid]);
 						}
 						rfu_cmd |= 0x80;
 						linktime = 0;
@@ -648,13 +643,9 @@ u16 StartRFU(u16 value)
 						linkmem.rfu_linktime[vbaid] = linktime;
 						if (linkmem.numgbas == 2) {
 							if (!linkid || (linkid && numtransfers))
-	#ifndef _XBOX
-							SetEvent(linksync[1-vbaid]);
-#endif
-#ifndef _XBOX
-							WaitForSingleObject(linksync[vbaid], linktimeout);
-#endif
-							ResetEvent(linksync[vbaid]);
+							LINK_SET_EVENT(linksync[1-vbaid]);
+							LINK_WAIT_EVENT(linksync[vbaid], linktimeout);
+							LINK_RESET_EVENT(linksync[vbaid]);
 						}
 						if ( linkid > 0) {
 							memcpy(rfu_masterdata, linkmem.rfu_data[1-vbaid], 128);
@@ -886,13 +877,46 @@ int lserver::Init(void *serverdlg){
 #ifdef _XBOX
 	// Xbox 360: All connections use SFML networking (even local multiplayer)
 	// Multiple instances on same Xbox communicate via localhost TCP sockets
-	// No Windows threading needed - will handle in main loop
 	lanlink.tcpsocket.Close();
 	if(lanlink.tcpsocket.Listen(5738) != sf::Socket::Done)
 		return -1;
 	lanlink.tcpsocket.SetBlocking(false);
 	lanlink.terminate = false;
 	linkid = 0;
+
+	// Accept the expected number of players without relying on Win32 CreateThread
+	int expected = lanlink.numgbas > 0 ? lanlink.numgbas : 1;
+	lanlink.numgbas = expected;
+
+	char outbuffer[256];
+	u16 *u16outbuffer = (u16*)outbuffer;
+	int connected = 0;
+	while(connected < expected && !lanlink.terminate){
+		sf::SocketTCP incoming;
+		sf::Socket::Status status = lanlink.tcpsocket.Accept(incoming);
+		if(status == sf::Socket::Done){
+			incoming.SetBlocking(false);
+			tcpsocket[connected+1] = incoming;
+			u16outbuffer[0] = connected + 1;
+			u16outbuffer[1] = expected;
+			SendExact(tcpsocket[connected+1], outbuffer, 4);
+			connected++;
+		}else if(status == sf::Socket::NotReady){
+			Sleep(10);
+		}else{
+			return -1;
+		}
+	}
+
+	if(connected < expected)
+		return -1;
+
+	for(i=1;i<=lanlink.numgbas;i++){
+		outbuffer[0] = 4;
+		SendExact(tcpsocket[i], outbuffer, 4);
+	}
+
+	lanlink.connected = true;
 	return 0;
 #else
 	DWORD nothing;
@@ -903,9 +927,7 @@ int lserver::Init(void *serverdlg){
 
 	if(lanlink.thread!=NULL){
 		lanlink.terminate = true;
-#ifndef _XBOX
-		WaitForSingleObject(linksync[vbaid], 500);
-#endif
+		LINK_WAIT_EVENT(linksync[vbaid], 500);
 		lanlink.thread = NULL;
 	}
 	lanlink.terminate = false;
@@ -920,7 +942,43 @@ int lserver::Init(void *serverdlg){
 #endif
 }
 
-#ifndef _XBOX
+#ifdef _XBOX
+DWORD WINAPI LinkServerThread(void * /*serverdlg*/){
+	char outbuffer[256];
+	u16 *u16outbuffer = (u16*)outbuffer;
+	int expected = lanlink.numgbas > 0 ? lanlink.numgbas : 1;
+	lanlink.numgbas = expected;
+	int connected = 0;
+
+	while(connected < expected && !lanlink.terminate){
+		sf::SocketTCP incoming;
+		sf::Socket::Status status = lanlink.tcpsocket.Accept(incoming);
+		if(status == sf::Socket::Done){
+			incoming.SetBlocking(false);
+			ls.tcpsocket[connected+1] = incoming;
+			u16outbuffer[0] = connected + 1;
+			u16outbuffer[1] = expected;
+			SendExact(ls.tcpsocket[connected+1], outbuffer, 4);
+			connected++;
+		}else if(status == sf::Socket::NotReady){
+			Sleep(10);
+		}else{
+			return 1;
+		}
+	}
+
+	if(connected == expected){
+		outbuffer[0] = 4;
+		for(i=1;i<=lanlink.numgbas;i++){
+			SendExact(ls.tcpsocket[i], outbuffer, 4);
+		}
+		lanlink.connected = true;
+		return 0;
+	}
+
+	return 1;
+}
+#else
 DWORD WINAPI LinkServerThread(void *serverdlg){
 	char inbuffer[256], outbuffer[256];
 	int *intinbuffer = (int*)inbuffer;
@@ -938,32 +996,20 @@ DWORD WINAPI LinkServerThread(void *serverdlg){
 			u16outbuffer[0] = i+1;
 			u16outbuffer[1] = lanlink.numgbas;
 			SendExact(ls.tcpsocket[i+1], outbuffer, 4);
-#ifndef _XBOX
 			((ServerWait*)serverdlg)->m_plconn[i].Format("Player %d connected", i+1);
 			((ServerWait*)serverdlg)->UpdateData(false);
-#endif
 			i++;
 		}else{
 			if(lanlink.terminate){
-#ifndef _XBOX
-				SetEvent(linksync[vbaid]);
-#endif
+				LINK_SET_EVENT(linksync[vbaid]);
 				return 0;
 			}
-#ifndef _XBOX
 			Sleep(10);
-#else
-			// Xbox: Use SFML timing or yield
-#endif
 		}
-#ifndef _XBOX
 		((ServerWait*)serverdlg)->m_prgctrl.StepIt();
-#endif
 	}
-#ifndef _XBOX
 	MessageBox(NULL, "All players connected", "Link", MB_OK);
 	((ServerWait*)serverdlg)->SendMessage(WM_CLOSE, 0, 0);
-#endif
 
 	for(i=1;i<=lanlink.numgbas;i++){
 		outbuffer[0] = 4;
@@ -974,7 +1020,7 @@ DWORD WINAPI LinkServerThread(void *serverdlg){
 
 	return 0;
 }
-#endif // _XBOX  // closes the #ifndef _XBOX before LinkServerThread
+#endif // _XBOX
 
 void lserver::Send(void){
 	if(lanlink.type==0){	// TCP
@@ -1083,7 +1129,9 @@ int lclient::Init(sf::IPAddress hostaddr, void *waitdlg){
 	lanlink.tcpsocket.Close();
 	if(lanlink.tcpsocket.Connect(5738, serveraddr) != sf::Socket::Done)
 		return 1;
-	lanlink.tcpsocket.SetBlocking(false);
+
+	// Block during handshake to avoid racing non-blocking receive path
+	lanlink.tcpsocket.SetBlocking(true);
 	
 	char inbuffer[16];
 	u16 *u16inbuffer = (u16*)inbuffer;
@@ -1095,6 +1143,7 @@ int lclient::Init(sf::IPAddress hostaddr, void *waitdlg){
 	if(!ReceiveExact(lanlink.tcpsocket, inbuffer, 4))
 		return 1;
 	
+	lanlink.tcpsocket.SetBlocking(false);
 	lanlink.connected = true;
 	return 0;
 #else
@@ -1107,7 +1156,7 @@ int lclient::Init(sf::IPAddress hostaddr, void *waitdlg){
 
 	if(lanlink.thread!=NULL){
 		lanlink.terminate = true;
-		WaitForSingleObject(linksync[vbaid], 500);
+		LINK_WAIT_EVENT(linksync[vbaid], 500);
 		lanlink.thread = NULL;
 	}
 
@@ -1118,48 +1167,62 @@ int lclient::Init(sf::IPAddress hostaddr, void *waitdlg){
 #endif
 }
 
-#ifndef _XBOX
+#ifdef _XBOX
+DWORD WINAPI LinkClientThread(void * /*waitdlg*/){
+	char inbuffer[16];
+	u16 *u16inbuffer = (u16*)inbuffer;
+	lanlink.tcpsocket.Close();
+	if(lanlink.tcpsocket.Connect(5738, lc.serveraddr) != sf::Socket::Done){
+		return 1;
+	}
+
+	// Block during initial handshake to simplify the receive path
+	lanlink.tcpsocket.SetBlocking(true);
+
+	if(!ReceiveExact(lanlink.tcpsocket, inbuffer, 4)){
+		return 1;
+	}
+	linkid = (int)u16inbuffer[0];
+	lanlink.numgbas = (int)u16inbuffer[1];
+
+	if(!ReceiveExact(lanlink.tcpsocket, inbuffer, 4)){
+		return 1;
+	}
+
+	lanlink.tcpsocket.SetBlocking(false);
+	lanlink.connected = true;
+	return 0;
+}
+#else
 DWORD WINAPI LinkClientThread(void *waitdlg){
 	char inbuffer[16];
 	u16 *u16inbuffer = (u16*)inbuffer;
 	lanlink.tcpsocket.Close();
 	if(lanlink.tcpsocket.Connect(5738, lc.serveraddr) != sf::Socket::Done){
-#ifndef _XBOX
 		MessageBox(NULL, "Couldn't connect to server.", "Link", MB_OK);
-#endif
 		return 1;
 	}
 
 	lanlink.tcpsocket.SetBlocking(false);
 
 	if(!ReceiveExact(lanlink.tcpsocket, inbuffer, 4)){
-#ifndef _XBOX
 		MessageBox(NULL, "Handshake failed.", "Link", MB_OK);
-#endif
 		return 1;
 	}
 	linkid = (int)u16inbuffer[0];
 	lanlink.numgbas = (int)u16inbuffer[1];
 
-#ifndef _XBOX
 	((ServerWait*)waitdlg)->m_serveraddress.Format("Connected as #%d", linkid+1);
 	if(lanlink.numgbas!=linkid)	((ServerWait*)waitdlg)->m_plconn[0].Format("Waiting for %d players to join", lanlink.numgbas-linkid);
 	else ((ServerWait*)waitdlg)->m_plconn[0].Format("All players joined.");
-#endif
 
 	if(!ReceiveExact(lanlink.tcpsocket, inbuffer, 4)){
-#ifndef _XBOX
 		MessageBox(NULL, "Server handshake failed.", "Link", MB_OK);
-#endif
 		return 1;
 	}
 
-#ifndef _XBOX
 	MessageBox(NULL, "Connected.", "Link", MB_OK);
-#endif
-#ifndef _XBOX
 	((ServerWait*)waitdlg)->SendMessage(WM_CLOSE, 0, 0);
-#endif
 
 	lanlink.connected = true;
 	return 0;
